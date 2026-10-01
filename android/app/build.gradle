@@ -1,0 +1,87 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+// Keystore configuration from environment variables (CI/CD) or local files
+def keystoreFile = System.getenv("KEYSTORE_FILE") ? file(System.getenv("KEYSTORE_FILE")) : (rootProject.file("key.jks").exists() ? rootProject.file("key.jks") : null)
+def keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: "claptofindpassword"
+def keyAlias = System.getenv("KEY_ALIAS") ?: "claptofindkey"
+def keyPassword = System.getenv("KEY_PASSWORD") ?: "claptofindpassword"
+
+android {
+    namespace "com.example.clap_to_find"
+    compileSdk 34
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.example.clap_to_find"
+        minSdk 24
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreFile != null && keystoreFile.exists()) {
+                storeFile keystoreFile
+                storePassword keystorePassword
+                keyAlias keyAlias
+                keyPassword keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig (keystoreFile != null && keystoreFile.exists()) ? signingConfigs.release : signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+}

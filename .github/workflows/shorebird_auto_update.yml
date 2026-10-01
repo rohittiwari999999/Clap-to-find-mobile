@@ -1,0 +1,70 @@
+name: Shorebird Auto OTA Patch
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: shorebird-patch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Android Shorebird OTA Patch Job
+  # ---------------------------------------------------------------------------
+  patch-android:
+    name: Shorebird Patch (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Set up Shorebird CLI
+        uses: shorebirdtech/setup-shorebird@v1
+        with:
+          shorebird-token: ${{ secrets.SHOREBIRD_TOKEN }}
+
+      - name: Run Shorebird Patch (Android)
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: shorebird patch android --force
+
+  # ---------------------------------------------------------------------------
+  # iOS Shorebird OTA Patch Job
+  # ---------------------------------------------------------------------------
+  patch-ios:
+    name: Shorebird Patch (iOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Set up Shorebird CLI
+        uses: shorebirdtech/setup-shorebird@v1
+        with:
+          shorebird-token: ${{ secrets.SHOREBIRD_TOKEN }}
+
+      - name: Run Shorebird Patch (iOS)
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: shorebird patch ios --force

@@ -1,0 +1,6 @@
+{
+  "name": "Clap to Find Phone - Flutter Architect & Studio",
+  "description": "Production Flutter architecture, background audio service, native Android/iOS configs, Shorebird CI/CD, and live interactive clap simulator.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

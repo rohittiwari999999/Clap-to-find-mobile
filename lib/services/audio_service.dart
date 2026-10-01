@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
@@ -187,7 +188,7 @@ void onStart(ServiceInstance service) async {
     // Using a transient memory stream or periodic amplitude sampling
     final stream = await recorder.startStream(
       const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
+        encoder: AudioEncoder.pcm16bit,
         sampleRate: 44100,
         numChannels: 1,
         bitRate: 128000,

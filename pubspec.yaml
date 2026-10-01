@@ -44,3 +44,8 @@ flutter:
 
   assets:
     - assets/sounds/alarm_siren.mp3
+
+dependency_overrides:
+  record_linux: 0.7.1
+  record_platform_interface: 1.0.0
+

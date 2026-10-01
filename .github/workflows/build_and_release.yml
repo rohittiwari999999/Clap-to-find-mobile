@@ -40,8 +40,13 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install Flutter Dependencies
-        run: flutter pub get
+      - name: Recreate Android Project Scaffold & Install Dependencies
+        run: |
+          rm -rf android
+          flutter create . --org com.example --project-name clap_to_find --platforms android
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
+          printf "\ndependency_overrides:\n  record_linux: 0.7.1\n  record_platform_interface: 1.0.0\n" >> pubspec.yaml
+          flutter pub get
 
       # Setup Android Signing Keystore:
       # If secrets are provided, decode them. Otherwise, generate an auto-signed release key
@@ -110,8 +115,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install Flutter Dependencies
-        run: flutter pub get
+      - name: Recreate iOS Project Scaffold & Install Dependencies
+        run: |
+          flutter create . --org com.example --project-name clap_to_find --platforms ios
+          flutter pub get
 
       # Build iOS Release App Bundle
       - name: Build iOS App (No Codesign for Testing/Packaging)

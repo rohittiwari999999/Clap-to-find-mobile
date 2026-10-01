@@ -53,7 +53,11 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/sounds/alarm_siren.mp3`
+    - assets/sounds/alarm_siren.mp3
+
+dependency_overrides:
+  record_linux: 0.7.1
+  record_platform_interface: 1.0.0`
   },
   {
     id: 'main',
@@ -660,6 +664,7 @@ class _ClapFinderHomePageState extends State<ClapFinderHomePage>
     description: 'Background isolate processing acoustic amplitude buffers with adaptive ambient noise tracking, transient clap spike detection, and coordinated alert actuators.',
     content: `import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
@@ -846,7 +851,7 @@ void onStart(ServiceInstance service) async {
     // Configure stream recording to evaluate live acoustic energy
     final stream = await recorder.startStream(
       const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
+        encoder: AudioEncoder.pcm16bit,
         sampleRate: 44100,
         numChannels: 1,
         bitRate: 128000,
@@ -1443,12 +1448,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig (keystoreFile != null && keystoreFile.exists()) ? signingConfigs.release : signingConfigs.debug
+            signingConfig = (keystoreFile != null && keystoreFile.exists()) ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }
         debug {
-            signingConfig signingConfigs.debug
+            signingConfig = signingConfigs.debug
         }
     }
 }`

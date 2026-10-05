@@ -75,6 +75,11 @@ jobs:
           '
           flutter pub get
 
+          # Patch all plugin build.gradle files in pub cache to use compileSdkVersion 36 (fixes :vibration compiled against android-33)
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 36/g' {} + 2>/dev/null || true
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s*=\s*[0-9]\+/compileSdk = 36/g' {} + 2>/dev/null || true
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s\+[0-9]\+/compileSdk 36/g' {} + 2>/dev/null || true
+
       - name: Configure Android Signing Keystore
         run: |
           mkdir -p android/app/keystore

@@ -43,17 +43,32 @@ jobs:
           grep -q "widgets.dart" lib/services/audio_service.dart || sed -i '1s/^/import \x27package:flutter\/widgets.dart\x27;\n/' lib/services/audio_service.dart
           sed -i 's/AudioEncoder.pcm16bits/AudioEncoder.pcm16bit/g' lib/services/audio_service.dart
 
-          # Ensure assets directory and alarm sound exist
+          # Ensure assets directory and alarm sound exist (no external ffmpeg needed)
           mkdir -p assets/sounds
-          if [ ! -f assets/sounds/alarm_siren.mp3 ]; then
-            ffmpeg -f lavfi -i "sine=frequency=800:duration=2" -c:a libmp3lame assets/sounds/alarm_siren.mp3 -y || touch assets/sounds/alarm_siren.mp3
+          if [ ! -s assets/sounds/alarm_siren.mp3 ]; then
+            curl -s -L -o assets/sounds/alarm_siren.mp3 "https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" || true
+            [ -s assets/sounds/alarm_siren.mp3 ] || touch assets/sounds/alarm_siren.mp3
           fi
 
-          # Force compileSdk 34 across all subprojects (fixes vibration & modern androidx requirement)
-          node -e 'const fs = require("fs"); fs.appendFileSync("android/build.gradle", "\nsubprojects { afterEvaluate { project -> if (project.hasProperty(\x22android\x22)) { project.android { compileSdkVersion 34 } } } }\n");'
-          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 34/g' android/app/build.gradle
-          sed -i 's/compileSdk = [0-9]*/compileSdk = 34/g' android/app/build.gradle
+          # Force compileSdk 34 for root and app across both Groovy (.gradle) and Kotlin DSL (.gradle.kts)
+          node -e '
+          const fs = require("fs");
+          if (fs.existsSync("android/build.gradle")) {
+            fs.appendFileSync("android/build.gradle", "\nsubprojects { afterEvaluate { project -> if (project.hasProperty(\x22android\x22)) { project.android { compileSdkVersion 34 } } } }\n");
+          }
+          if (fs.existsSync("android/build.gradle.kts")) {
+            fs.appendFileSync("android/build.gradle.kts", "\nsubprojects {\n    afterEvaluate {\n        if (project.hasProperty(\x22android\x22)) {\n            val android = project.extensions.findByName(\x22android\x22) as? com.android.build.gradle.BaseExtension\n            android?.compileSdkVersion(34)\n        }\n    }\n}\n");
+          }
+          ["android/app/build.gradle", "android/app/build.gradle.kts"].forEach(f => {
+            if (fs.existsSync(f)) {
+              let c = fs.readFileSync(f, "utf8");
+              c = c.replace(/flutter\.compileSdkVersion/g, "34")
+                   .replace(/compileSdkVersion\s+[0-9]+/g, "compileSdkVersion 34")
+                   .replace(/compileSdk\s*=\s*[0-9]+/g, "compileSdk = 34");
+              fs.writeFileSync(f, c);
+            }
+          });
+          '
 
           flutter pub get
 

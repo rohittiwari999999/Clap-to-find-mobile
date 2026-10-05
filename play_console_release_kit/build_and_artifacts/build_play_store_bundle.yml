@@ -1,0 +1,131 @@
+name: Build Google Play Store Bundle (AAB & APK)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-play-store-release:
+    name: Build Signed AAB & APK for Google Play
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Clean & Prepare Android Scaffold
+        run: |
+          rm -rf android
+          flutter create . --org com.example --project-name clap_to_find --platforms android
+          
+          # Android Permissions
+          sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
+          
+          # Dependency Overrides for Linux/cross-compilation
+          printf "\ndependency_overrides:\n  record_linux: 0.7.1\n  record_platform_interface: 1.0.0\n" >> pubspec.yaml
+          
+          # Automated Dart code patches
+          grep -q "widgets.dart" lib/services/audio_service.dart || sed -i '1s/^/import \x27package:flutter\/widgets.dart\x27;\n/' lib/services/audio_service.dart
+          sed -i 's/AudioEncoder.pcm16bits/AudioEncoder.pcm16bit/g' lib/services/audio_service.dart
+
+          # Ensure assets directory and alarm sound exist
+          mkdir -p assets/sounds
+          if [ ! -f assets/sounds/alarm_siren.mp3 ]; then
+            ffmpeg -f lavfi -i "sine=frequency=800:duration=2" -c:a libmp3lame assets/sounds/alarm_siren.mp3 -y || touch assets/sounds/alarm_siren.mp3
+          fi
+
+          # Force compileSdk 34 across all subprojects (fixes vibration & modern androidx requirement)
+          node -e 'const fs = require("fs"); fs.appendFileSync("android/build.gradle", "\nsubprojects { afterEvaluate { project -> if (project.hasProperty(\x22android\x22)) { project.android { compileSdkVersion 34 } } } }\n");'
+          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
+          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 34/g' android/app/build.gradle
+          sed -i 's/compileSdk = [0-9]*/compileSdk = 34/g' android/app/build.gradle
+
+          flutter pub get
+
+      # Automated Signing Configuration for Production Release
+      - name: Configure Production Signing Keystore
+        run: |
+          mkdir -p android/keystores
+          KEYSTORE_PATH="android/keystores/release.jks"
+          KEY_ALIAS="claptofind"
+          KEY_PASS="androidrelease123"
+          STORE_PASS="androidrelease123"
+
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+            [ -n "${{ secrets.KEY_ALIAS }}" ] && KEY_ALIAS="${{ secrets.KEY_ALIAS }}"
+            [ -n "${{ secrets.KEY_PASSWORD }}" ] && KEY_PASS="${{ secrets.KEY_PASSWORD }}"
+            [ -n "${{ secrets.STORE_PASSWORD }}" ] && STORE_PASS="${{ secrets.STORE_PASSWORD }}"
+          else
+            keytool -genkey -v -keystore "$KEYSTORE_PATH" \
+              -storepass "$STORE_PASS" -alias "$KEY_ALIAS" -keypass "$KEY_PASS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=ClapToFind, OU=Mobile, O=Apps, L=Global, S=Global, C=US"
+          fi
+
+          cat << EOF > android/key.properties
+          storePassword=$STORE_PASS
+          keyPassword=$KEY_PASS
+          keyAlias=$KEY_ALIAS
+          storeFile=../keystores/release.jks
+          EOF
+
+          # Configure signingConfig in android/app/build.gradle
+          node -e '
+          const fs = require("fs");
+          let content = fs.readFileSync("android/app/build.gradle", "utf8");
+          const signingDef = `
+          def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file("key.properties")
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+          `;
+          content = signingDef + content;
+          content = content.replace("buildTypes {", `
+              signingConfigs {
+                  release {
+                      keyAlias = keystoreProperties["keyAlias"]
+                      keyPassword = keystoreProperties["keyPassword"]
+                      storeFile = keystoreProperties["storeFile"] ? file(keystoreProperties["storeFile"]) : null
+                      storePassword = keystoreProperties["storePassword"]
+                  }
+              }
+              buildTypes {
+          `);
+          content = content.replace("buildTypes {\\n        release {", "buildTypes {\\n        release {\\n            signingConfig = signingConfigs.release");
+          fs.writeFileSync("android/app/build.gradle", content);
+          '
+
+      - name: Build Google Play Android App Bundle (.aab)
+        run: flutter build appbundle --release
+
+      - name: Build Release APK (.apk)
+        run: flutter build apk --release
+
+      - name: Upload Google Play AAB Bundle to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-play-bundle-aab
+          path: build/app/outputs/bundle/release/*.aab
+
+      - name: Upload Standalone Release APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-release-apk
+          path: build/app/outputs/flutter-apk/*release*.apk

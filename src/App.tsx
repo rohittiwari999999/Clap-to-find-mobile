@@ -9,16 +9,18 @@ import {
   Activity,
   Layers,
   Sparkles,
+  PackageCheck,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { PhoneSimulator } from './components/PhoneSimulator';
 import { CodeInspector } from './components/CodeInspector';
 import { ArchitectureGuide } from './components/ArchitectureGuide';
 import { MobileGitHubPublisher } from './components/MobileGitHubPublisher';
+import { PlayConsoleKit } from './components/PlayConsoleKit';
 import { CODEBASE_FILES } from './data/codebaseData';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'code' | 'architecture'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'code' | 'architecture' | 'play_console'>('simulator');
   const [triggerCount, setTriggerCount] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [isMobilePublisherOpen, setIsMobilePublisherOpen] = useState(false);
@@ -120,6 +122,18 @@ flutter run
             <BookOpen className="w-3.5 h-3.5" />
             <span>Architecture Blueprint</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('play_console')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              activeTab === 'play_console'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
+            }`}
+          >
+            <PackageCheck className="w-3.5 h-3.5" />
+            <span>Play Console Kit</span>
+          </button>
         </nav>
 
         {/* Zone 3: Primary Action CTA (Always visible on all screens!) */}
@@ -167,6 +181,14 @@ flutter run
             }`}
           >
             Guide
+          </button>
+          <button
+            onClick={() => setActiveTab('play_console')}
+            className={`flex-1 py-1.5 text-center text-xs font-semibold rounded-lg ${
+              activeTab === 'play_console' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'text-emerald-400'
+            }`}
+          >
+            Play Kit
           </button>
         </div>
       </header>
@@ -345,6 +367,13 @@ flutter run
         {activeTab === 'architecture' && (
           <div className="space-y-6">
             <ArchitectureGuide />
+          </div>
+        )}
+
+        {/* Tab 4: Google Play Console Release Kit */}
+        {activeTab === 'play_console' && (
+          <div className="space-y-6">
+            <PlayConsoleKit />
           </div>
         )}
       </main>

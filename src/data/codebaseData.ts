@@ -1457,5 +1457,157 @@ android {
         }
     }
 }`
+  },
+  {
+    id: 'play-store-guide',
+    name: 'README_PLAY_CONSOLE_GUIDE.md',
+    path: 'play_console_release_kit/README_PLAY_CONSOLE_GUIDE.md',
+    language: 'markdown',
+    badge: 'Play Console',
+    description: 'Master checklist and step-by-step guide for publishing Clap to Find Phone on Google Play Console.',
+    content: `# 📱 Google Play Console Release Kit - Master Guide
+## App: Clap to Find Phone: Siren Pro
+
+Aapka poora Play Console Release Package is folder ke andar organize kar diya gaya hai!
+
+### 📁 Kit Folder Structure
+1. \`assets/app_icon_512x512.jpg\` (Play Store App Icon - 512x512 px)
+2. \`assets/feature_graphic_1024x500.jpg\` (Play Store Feature Banner - 1024x500 px)
+3. \`assets/screenshot_1_radar_active.jpg\` (Phone Screenshot 1: Radar Active)
+4. \`assets/screenshot_2_alarm_triggered.jpg\` (Phone Screenshot 2: Siren Active)
+5. \`store_listing/play_store_details.md\` (Title, Short & Full Description, Tags)
+6. \`store_listing/privacy_policy.md\` & \`privacy_policy.html\` (Compliance documents)
+7. \`store_listing/data_safety_form_answers.md\` (Play Console Data Safety answers)
+8. \`build_and_artifacts/build_play_store_bundle.yml\` (GitHub Actions workflow for .AAB)
+
+### 🚀 Quick Steps:
+1. Open https://play.google.com/console -> Create App
+2. Upload 512x512 icon & 1024x500 banner from assets/
+3. Copy-paste Title, Short & Full descriptions from store_listing/play_store_details.md
+4. Commit build_play_store_bundle.yml to GitHub Actions to generate your signed .AAB bundle!
+5. Drag and drop .aab into Play Console Release -> Rollout to Production!`
+  },
+  {
+    id: 'play-store-details',
+    name: 'play_store_details.md',
+    path: 'play_console_release_kit/store_listing/play_store_details.md',
+    language: 'markdown',
+    badge: 'Play Console',
+    description: 'Exact App Title, Short Description, Full Description, and category metadata for Google Play Console.',
+    content: `# Google Play Store Listing Copy & Metadata
+
+## Basic Details
+- App Name (Title): Clap to Find Phone: Siren Pro (30 chars)
+- Short Description: Find lost phone instantly by clapping! Loud siren alarm, strobe flash & vibrate. (79 chars)
+
+## Categorization
+- Category: Tools / Utilities
+- Content Rating: Everyone (3+)
+- Contains Ads: No
+
+## Full Description
+👏 Never lose your phone in the dark, under sofa cushions, or in another room again! With Clap to Find Phone: Siren Pro, simply clap your hands twice and your phone will instantly ring with a piercing siren, flash its bright camera strobe, and vibrate strongly — even if your phone is on SILENT mode!
+
+### 🌟 KEY FEATURES:
+🔊 Super Loud Emergency Siren (high frequency, overrides silent mode)
+🔦 Intense Strobe Flashlight (blinks camera LED in rhythmic pulses)
+📳 Heavy Haptic Vibration
+⚡ Smart Acoustic Transient Detection
+🔋 Ultra-Low Battery Consumption (lightweight background foreground service)`
+  },
+  {
+    id: 'play-store-privacy',
+    name: 'privacy_policy.md',
+    path: 'play_console_release_kit/store_listing/privacy_policy.md',
+    language: 'markdown',
+    badge: 'Compliance',
+    description: 'GDPR and Google Play compliant privacy policy detailing microphone on-device transient audio analysis.',
+    content: `# Privacy Policy for Clap to Find Phone: Siren Pro
+Last Updated: October 2026
+
+## 1. Zero Personal Data Collection
+We do not collect, store, or transmit any personally identifiable information.
+
+## 2. Microphone Permission (RECORD_AUDIO)
+Required strictly to detect acoustic transient spikes (such as clapping). Audio frames are sampled in volatile device RAM in real-time. Audio is NEVER recorded, NEVER stored in persistent storage, and NEVER uploaded to any server.
+
+## 3. Camera Permission (CAMERA)
+Required exclusively for activating the camera LED flashlight strobe during an active alarm alert. Camera sensors are never used to capture photos or videos.
+
+## 4. Contact Us
+Developer Email: sarita.abhinav.t@gmail.com`
+  },
+  {
+    id: 'play-store-workflow',
+    name: 'build_play_store_bundle.yml',
+    path: 'play_console_release_kit/build_and_artifacts/build_play_store_bundle.yml',
+    language: 'yaml',
+    badge: 'CI/CD AAB',
+    description: 'Automated GitHub Actions workflow compiling signed Android App Bundle (.aab) and APK.',
+    content: `name: Build Google Play Store Bundle (AAB & APK)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-play-store-release:
+    name: Build Signed AAB & APK for Google Play
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Clean & Prepare Android Scaffold
+        run: |
+          rm -rf android
+          flutter create . --org com.example --project-name clap_to_find --platforms android
+          sed -i '/<application/i \\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.VIBRATE" />\\n    <uses-permission android:name="android.permission.CAMERA" />\\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
+          printf "\\ndependency_overrides:\\n  record_linux: 0.7.1\\n  record_platform_interface: 1.0.0\\n" >> pubspec.yaml
+          grep -q "widgets.dart" lib/services/audio_service.dart || sed -i '1s/^/import \\x27package:flutter\\/widgets.dart\\x27;\\n/' lib/services/audio_service.dart
+          sed -i 's/AudioEncoder.pcm16bits/AudioEncoder.pcm16bit/g' lib/services/audio_service.dart
+          mkdir -p assets/sounds
+          if [ ! -f assets/sounds/alarm_siren.mp3 ]; then
+            ffmpeg -f lavfi -i "sine=frequency=800:duration=2" -c:a libmp3lame assets/sounds/alarm_siren.mp3 -y || touch assets/sounds/alarm_siren.mp3
+          fi
+          node -e 'const fs = require("fs"); fs.appendFileSync("android/build.gradle", "\\nsubprojects { afterEvaluate { project -> if (project.hasProperty(\\x22android\\x22)) { project.android { compileSdkVersion 34 } } } }\\n");'
+          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
+          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 34/g' android/app/build.gradle
+          sed -i 's/compileSdk = [0-9]*/compileSdk = 34/g' android/app/build.gradle
+          flutter pub get
+
+      - name: Build Google Play Android App Bundle (.aab)
+        run: flutter build appbundle --release
+
+      - name: Build Release APK (.apk)
+        run: flutter build apk --release
+
+      - name: Upload Google Play AAB Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-play-bundle-aab
+          path: build/app/outputs/bundle/release/*.aab
+
+      - name: Upload Standalone Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-release-apk
+          path: build/app/outputs/flutter-apk/*release*.apk`
   }
 ];

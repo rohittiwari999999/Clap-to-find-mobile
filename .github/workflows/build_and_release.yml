@@ -44,15 +44,21 @@ jobs:
         run: |
           rm -rf android
           flutter create . --org com.example --project-name clap_to_find --platforms android
+          
+          # Android Permissions
           sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
+          
+          # Declare Foreground Service for Android 14+ (prevents crash on button tap)
+          sed -i '/<\/application>/i \        <service android:name="id.flutter.flutter_background_service.BackgroundService" android:foregroundServiceType="microphone" android:exported="true" />' android/app/src/main/AndroidManifest.xml
           
           # Prevent duplicate mapping key error
           grep -q "dependency_overrides:" pubspec.yaml || printf "\ndependency_overrides:\n  record_linux: 0.7.1\n  record_platform_interface: 1.0.0\n" >> pubspec.yaml
           
           grep -q "widgets.dart" lib/services/audio_service.dart || sed -i '1s/^/import \x27package:flutter\/widgets.dart\x27;\n/' lib/services/audio_service.dart
+          grep -q "WidgetsFlutterBinding.ensureInitialized();" lib/services/audio_service.dart || sed -i '/void onStart(ServiceInstance service) async {/a \  WidgetsFlutterBinding.ensureInitialized();' lib/services/audio_service.dart
           sed -i 's/AudioEncoder.pcm16bits/AudioEncoder.pcm16bit/g' lib/services/audio_service.dart
 
-          # Ensure assets directory and alarm sound exist (no external ffmpeg needed)
+          # Ensure assets directory and alarm sound exist
           mkdir -p assets/sounds
           if [ ! -s assets/sounds/alarm_siren.mp3 ]; then
             curl -s -L -o assets/sounds/alarm_siren.mp3 "https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" || true
@@ -75,7 +81,7 @@ jobs:
           '
           flutter pub get
 
-          # Patch all plugin build.gradle files in pub cache to use compileSdkVersion 36 (fixes :vibration compiled against android-33)
+          # Patch all plugin build.gradle files in pub cache to use compileSdkVersion 36
           find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 36/g' {} + 2>/dev/null || true
           find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s*=\s*[0-9]\+/compileSdk = 36/g' {} + 2>/dev/null || true
           find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s\+[0-9]\+/compileSdk 36/g' {} + 2>/dev/null || true

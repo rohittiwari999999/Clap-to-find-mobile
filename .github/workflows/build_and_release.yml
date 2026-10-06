@@ -48,7 +48,7 @@ jobs:
           # Android Permissions
           sed -i '/<application/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
           
-          # Declare Foreground Service for Android 14+ (prevents crash on button tap)
+          # Declare Foreground Service for Android 14+ (Fixes app crash on button tap)
           sed -i '/<\/application>/i \        <service android:name="id.flutter.flutter_background_service.BackgroundService" android:foregroundServiceType="microphone" android:exported="true" />' android/app/src/main/AndroidManifest.xml
           
           # Prevent duplicate mapping key error

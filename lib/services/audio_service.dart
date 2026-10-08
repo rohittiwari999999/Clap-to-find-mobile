@@ -54,7 +54,9 @@ class AudioServiceManager {
 /// Entry point executed inside the isolated background service thread.
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    DartPluginRegistrant.ensureInitialized();
 
   // Bring up hardware controllers inside isolate
   final AudioRecorder recorder = AudioRecorder();
@@ -262,6 +264,9 @@ void onStart(ServiceInstance service) async {
     await service.stopSelf();
   });
 
-  // Start acoustic monitoring immediately upon service spin-up
-  await startAcousticListening();
+    // Start acoustic monitoring immediately upon service spin-up
+    await startAcousticListening();
+  }, (error, stack) {
+    debugPrint('[BackgroundIsolate] Caught unhandled error: $error');
+  });
 }

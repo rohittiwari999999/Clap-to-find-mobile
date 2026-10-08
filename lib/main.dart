@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'services/audio_service.dart';
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:torch_light/torch_light.dart';
+import 'package:vibration/vibration.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await AudioServiceManager.initializeService();
-  runApp(const ClapToFindApp());
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    runApp(const ClapToFindApp());
+  }, (error, stack) {
+    debugPrint('[ClapApp] Caught error in zone: $error');
+  });
 }
 
 class ClapToFindApp extends StatelessWidget {
@@ -43,7 +48,8 @@ class ClapFinderHomePage extends StatefulWidget {
 
 class _ClapFinderHomePageState extends State<ClapFinderHomePage>
     with SingleTickerProviderStateMixin {
-  final FlutterBackgroundService _service = FlutterBackgroundService();
+  final AudioRecorder _recorder = AudioRecorder();
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   bool _isServiceRunning = false;
   bool _isAlerting = false;
@@ -56,9 +62,10 @@ class _ClapFinderHomePageState extends State<ClapFinderHomePage>
   bool _enableSiren = true;
 
   late AnimationController _pulseController;
-  StreamSubscription? _telemetrySub;
-  StreamSubscription? _alertSub;
-  StreamSubscription? _stateSub;
+  Timer? _amplitudeTimer;
+  Timer? _strobeTimer;
+  bool _strobeState = false;
+  DateTime _lastTriggerTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -69,16 +76,20 @@ class _ClapFinderHomePageState extends State<ClapFinderHomePage>
     )..repeat();
 
     _loadPreferences();
-    _bindServiceListeners();
-    _checkServiceStatus();
   }
 
   @override
   void dispose() {
     _pulseController.dispose();
-    _telemetrySub?.cancel();
-    _alertSub?.cancel();
-    _stateSub?.cancel();
+    _amplitudeTimer?.cancel();
+    _strobeTimer?.cancel();
+    _stopAlarm();
+    try {
+      _recorder.dispose();
+    } catch (_) {}
+    try {
+      _audioPlayer.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -92,80 +103,173 @@ class _ClapFinderHomePageState extends State<ClapFinderHomePage>
     });
   }
 
-  Future<void> _bindServiceListeners() async {
-    _telemetrySub = _service.on('telemetry').listen((data) {
-      if (mounted && data != null) {
-        setState(() {
-          _currentDb = (data['currentDb'] as num?)?.toDouble() ?? _currentDb;
-          _ambientDb = (data['ambientDb'] as num?)?.toDouble() ?? _ambientDb;
-        });
-      }
-    });
-
-    _alertSub = _service.on('alertTriggered').listen((data) {
-      if (mounted) {
-        setState(() {
-          _isAlerting = true;
-        });
-      }
-    });
-
-    _stateSub = _service.on('alertStateChanged').listen((data) {
-      if (mounted && data != null) {
-        setState(() {
-          _isAlerting = data['isAlerting'] ?? false;
-        });
-      }
-    });
-  }
-
-  Future<void> _checkServiceStatus() async {
-    final isRunning = await _service.isRunning();
-    if (mounted) {
-      setState(() {
-        _isServiceRunning = isRunning;
-      });
+  Future<void> _toggleService() async {
+    if (_isServiceRunning) {
+      await _stopListening();
+    } else {
+      await _startListening();
     }
   }
 
-  Future<void> _toggleService() async {
-    if (_isServiceRunning) {
-      _service.invoke('stopService');
-      setState(() {
-        _isServiceRunning = false;
-        _isAlerting = false;
-        _currentDb = -60.0;
-      });
-    } else {
-      // Check & request runtime permissions first
-      final micStatus = await Permission.microphone.request();
-      if (!micStatus.isGranted) {
-        _showPermissionDialog('Microphone Access Required',
-            'Please grant microphone permission so the app can detect clap transients.');
-        return;
-      }
+  Future<void> _startListening() async {
+    // 1. Request microphone permission
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
+      _showPermissionDialog(
+        'Microphone Access Required',
+        'Please grant microphone permission in Settings so the app can listen for claps.',
+      );
+      return;
+    }
 
+    try {
       await Permission.notification.request();
+    } catch (_) {}
 
-      final started = await _service.startService();
-      setState(() {
-        _isServiceRunning = started;
+    try {
+      // Start real-time audio stream
+      final stream = await _recorder.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bit,
+          sampleRate: 44100,
+          numChannels: 1,
+        ),
+      );
+      stream.listen((_) {});
+
+      // Poll acoustic amplitude every 50ms
+      _amplitudeTimer?.cancel();
+      _amplitudeTimer = Timer.periodic(const Duration(milliseconds: 50), (_) async {
+        if (_isAlerting) return;
+        try {
+          final amp = await _recorder.getAmplitude();
+          final currentDb = amp.current.clamp(-80.0, 0.0);
+          if (mounted) {
+            setState(() {
+              _currentDb = currentDb;
+            });
+          }
+
+          // Adaptive background noise floor
+          if (currentDb > -70.0 && currentDb < -25.0) {
+            _ambientDb = (_ambientDb * 0.95) + (currentDb * 0.05);
+          }
+
+          final delta = currentDb - _ambientDb;
+          final isLoud = currentDb >= _sensitivityThreshold;
+          final isSpike = delta >= 16.0;
+          final cooldownOk =
+              DateTime.now().difference(_lastTriggerTime) > const Duration(milliseconds: 2000);
+
+          if (isLoud && isSpike && cooldownOk) {
+            _triggerAlert(currentDb);
+          }
+        } catch (_) {}
       });
+
+      setState(() {
+        _isServiceRunning = true;
+      });
+    } catch (e) {
+      debugPrint('[Detector] Error starting audio stream: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Audio engine error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopListening() async {
+    _amplitudeTimer?.cancel();
+    _amplitudeTimer = null;
+    try {
+      await _recorder.stop();
+    } catch (_) {}
+    _stopAlarm();
+    setState(() {
+      _isServiceRunning = false;
+      _currentDb = -60.0;
+    });
+  }
+
+  Future<void> _triggerAlert(double detectedDb) async {
+    if (_isAlerting) return;
+    _lastTriggerTime = DateTime.now();
+    setState(() {
+      _isAlerting = true;
+    });
+
+    // 1. Play loop siren alarm at maximum volume
+    if (_enableSiren) {
+      try {
+        await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+        await _audioPlayer.setVolume(1.0);
+        await _audioPlayer.play(AssetSource('sounds/alarm_siren.mp3'));
+      } catch (e) {
+        debugPrint('[Alert] Siren error: $e');
+      }
+    }
+
+    // 2. Continuous repeating haptic vibration pattern
+    if (_enableVibration) {
+      try {
+        final hasVib = await Vibration.hasVibrator();
+        if (hasVib == true) {
+          Vibration.vibrate(
+            pattern: [500, 250, 500, 250, 750, 250],
+            intensities: [128, 255, 128, 255, 255, 255],
+            repeat: 0,
+          );
+        }
+      } catch (e) {
+        debugPrint('[Alert] Vibration error: $e');
+      }
+    }
+
+    // 3. High frequency flashlight strobe (160ms cycle)
+    if (_enableFlashlight) {
+      try {
+        _strobeTimer?.cancel();
+        _strobeTimer = Timer.periodic(const Duration(milliseconds: 160), (_) async {
+          if (!_isAlerting) return;
+          _strobeState = !_strobeState;
+          try {
+            if (_strobeState) {
+              await TorchLight.enableTorch();
+            } else {
+              await TorchLight.disableTorch();
+            }
+          } catch (_) {}
+        });
+      } catch (e) {
+        debugPrint('[Alert] Torch error: $e');
+      }
     }
   }
 
   void _stopAlarm() {
-    _service.invoke('stopAlert');
+    _strobeTimer?.cancel();
+    _strobeTimer = null;
+    try {
+      TorchLight.disableTorch();
+    } catch (_) {}
+    try {
+      Vibration.cancel();
+    } catch (_) {}
+    try {
+      _audioPlayer.stop();
+    } catch (_) {}
     setState(() {
       _isAlerting = false;
     });
   }
 
   void _simulateClap() {
-    _service.invoke('simulateClap');
-    setState(() {
-      _isAlerting = true;
-    });
+    _triggerAlert(-8.5);
   }
 
   void _showPermissionDialog(String title, String message) {
@@ -478,7 +582,9 @@ class _ClapFinderHomePageState extends State<ClapFinderHomePage>
               setState(() {
                 _sensitivityThreshold = val;
               });
-              _service.invoke('setSensitivity', {'thresholdDb': val});
+              SharedPreferences.getInstance().then((prefs) {
+                prefs.setDouble('sensitivity_threshold_db', val);
+              });
             },
           ),
           const Divider(color: Colors.white10, height: 24),

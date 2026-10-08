@@ -1,9 +1,6 @@
 name: Shorebird Auto OTA Patch
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 concurrency:

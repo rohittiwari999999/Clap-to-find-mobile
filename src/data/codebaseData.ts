@@ -939,8 +939,9 @@ void onStart(ServiceInstance service) async {
     <!-- Essential Acoustic & Hardware Permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Android 14+ specific foreground service type for microphone recording -->
+    <!-- Android 14+ specific foreground service type for microphone recording & media playback -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Android 13+ runtime notification requirement -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -960,12 +961,13 @@ void onStart(ServiceInstance service) async {
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false">
 
-        <!-- Background Execution Service with Microphone Foreground Type -->
+        <!-- Background Execution Service with Microphone & Media Playback Foreground Types -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="microphone"
+            android:foregroundServiceType="microphone|mediaPlayback"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="true"
+            android:stopWithTask="false" />
 
         <activity
             android:name=".MainActivity"
@@ -1578,19 +1580,34 @@ jobs:
         run: |
           rm -rf android
           flutter create . --org com.example --project-name clap_to_find --platforms android
-          sed -i '/<application/i \\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.VIBRATE" />\\n    <uses-permission android:name="android.permission.CAMERA" />\\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' android/app/src/main/AndroidManifest.xml
-          printf "\\ndependency_overrides:\\n  record_linux: 0.7.1\\n  record_platform_interface: 1.0.0\\n" >> pubspec.yaml
+          sed -i '/<application/i \\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.VIBRATE" />\\n    <uses-permission android:name="android.permission.CAMERA" />\\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />\\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />' android/app/src/main/AndroidManifest.xml
+          sed -i '/<\\/application>/i \\        <service android:name="id.flutter.flutter_background_service.BackgroundService" android:foregroundServiceType="microphone|mediaPlayback" android:stopWithTask="false" android:exported="true" />' android/app/src/main/AndroidManifest.xml
+          grep -q "dependency_overrides:" pubspec.yaml || printf "\\ndependency_overrides:\\n  record_linux: 0.7.1\\n  record_platform_interface: 1.0.0\\n" >> pubspec.yaml
           grep -q "widgets.dart" lib/services/audio_service.dart || sed -i '1s/^/import \\x27package:flutter\\/widgets.dart\\x27;\\n/' lib/services/audio_service.dart
+          grep -q "WidgetsFlutterBinding.ensureInitialized();" lib/services/audio_service.dart || sed -i '/void onStart(ServiceInstance service) async {/a \\  WidgetsFlutterBinding.ensureInitialized();' lib/services/audio_service.dart
           sed -i 's/AudioEncoder.pcm16bits/AudioEncoder.pcm16bit/g' lib/services/audio_service.dart
           mkdir -p assets/sounds
-          if [ ! -f assets/sounds/alarm_siren.mp3 ]; then
-            ffmpeg -f lavfi -i "sine=frequency=800:duration=2" -c:a libmp3lame assets/sounds/alarm_siren.mp3 -y || touch assets/sounds/alarm_siren.mp3
+          if [ ! -s assets/sounds/alarm_siren.mp3 ]; then
+            curl -s -L -o assets/sounds/alarm_siren.mp3 "https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" || true
+            [ -s assets/sounds/alarm_siren.mp3 ] || touch assets/sounds/alarm_siren.mp3
           fi
-          node -e 'const fs = require("fs"); fs.appendFileSync("android/build.gradle", "\\nsubprojects { afterEvaluate { project -> if (project.hasProperty(\\x22android\\x22)) { project.android { compileSdkVersion 34 } } } }\\n");'
-          sed -i 's/flutter.compileSdkVersion/34/g' android/app/build.gradle
-          sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 34/g' android/app/build.gradle
-          sed -i 's/compileSdk = [0-9]*/compileSdk = 34/g' android/app/build.gradle
+          echo "flutter.compileSdkVersion=36" >> android/gradle.properties
+          node -e '
+          const fs = require("fs");
+          ["android/app/build.gradle", "android/app/build.gradle.kts"].forEach(f => {
+            if (fs.existsSync(f)) {
+              let c = fs.readFileSync(f, "utf8");
+              c = c.replace(/flutter\\.compileSdkVersion/g, "36")
+                   .replace(/compileSdkVersion\\s+[0-9]+/g, "compileSdkVersion 36")
+                   .replace(/compileSdk\\s*=\\s*[0-9]+/g, "compileSdk = 36");
+              fs.writeFileSync(f, c);
+            }
+          });
+          '
           flutter pub get
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 36/g' {} + 2>/dev/null || true
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s*=\s*[0-9]\+/compileSdk = 36/g' {} + 2>/dev/null || true
+          find "$HOME/.pub-cache" -name "build.gradle*" -exec sed -i 's/compileSdk\s\+[0-9]\+/compileSdk 36/g' {} + 2>/dev/null || true
 
       - name: Build Google Play Android App Bundle (.aab)
         run: flutter build appbundle --release

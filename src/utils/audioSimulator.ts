@@ -1,7 +1,9 @@
 /**
- * Web Audio API Acoustic Simulator for testing Clap to Find algorithms.
- * Mirrors the native Dart / Flutter AudioRecorder spike detection logic in-browser.
+ * Web Audio API Acoustic Simulator for testing Clap & Voice detection algorithms.
+ * Mirrors the native Flutter isolate AudioRecorder multi-mode acoustic detection logic.
  */
+
+export type DetectionMode = 'clap' | 'whistle' | 'preloaded_voice' | 'custom_voice';
 
 export class WebAudioSimulator {
   private audioCtx: AudioContext | null = null;
@@ -14,7 +16,14 @@ export class WebAudioSimulator {
 
   private ambientBaselineDb = -45;
   private lastTriggerTime = 0;
-  private cooldownMs = 2500;
+  private cooldownMs = 2800;
+
+  private currentSensitivityDb = -16;
+  public detectionMode: DetectionMode = 'clap';
+  public preloadedVoicePhrase = 'Hey Phone!';
+  public customVoiceProfile: string | null = null;
+
+  private recentDbHistory: number[] = [];
 
   public onTelemetry?: (telemetry: {
     currentDb: number;
@@ -23,12 +32,15 @@ export class WebAudioSimulator {
     waveformData: Uint8Array;
   }) => void;
 
-  public onAlertTriggered?: (db: number) => void;
+  public onAlertTriggered?: (db: number, reason: string) => void;
 
   /**
    * Initializes microphone capture and connects to AnalyserNode
    */
-  public async startListening(sensitivityDb: number): Promise<boolean> {
+  public async startListening(sensitivityDb: number, mode: DetectionMode = 'clap'): Promise<boolean> {
+    this.currentSensitivityDb = sensitivityDb;
+    this.detectionMode = mode;
+
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -46,7 +58,7 @@ export class WebAudioSimulator {
       this.analyser.smoothingTimeConstant = 0.2;
       source.connect(this.analyser);
 
-      this.loop(sensitivityDb);
+      this.loop();
       return true;
     } catch (err) {
       console.warn('Microphone access denied or unavailable in this environment:', err);
@@ -54,17 +66,32 @@ export class WebAudioSimulator {
     }
   }
 
-  private loop = (sensitivityDb: number) => {
+  public setSensitivity(db: number) {
+    this.currentSensitivityDb = db;
+  }
+
+  public setMode(mode: DetectionMode) {
+    this.detectionMode = mode;
+  }
+
+  public setCustomVoiceProfile(profile: string | null) {
+    this.customVoiceProfile = profile;
+  }
+
+  private loop = () => {
     if (!this.analyser) return;
 
     const bufferLength = this.analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    this.analyser.getByteTimeDomainData(dataArray);
+    const timeDataArray = new Uint8Array(bufferLength);
+    const freqDataArray = new Uint8Array(bufferLength);
+
+    this.analyser.getByteTimeDomainData(timeDataArray);
+    this.analyser.getByteFrequencyData(freqDataArray);
 
     // Calculate RMS amplitude from time-domain PCM samples
     let sumSquares = 0;
     for (let i = 0; i < bufferLength; i++) {
-      const normalized = (dataArray[i] - 128) / 128; // -1.0 to 1.0
+      const normalized = (timeDataArray[i] - 128) / 128; // -1.0 to 1.0
       sumSquares += normalized * normalized;
     }
     const rms = Math.sqrt(sumSquares / bufferLength);
@@ -80,30 +107,67 @@ export class WebAudioSimulator {
       this.ambientBaselineDb = this.ambientBaselineDb * 0.95 + currentDb * 0.05;
     }
 
-    // Spike criteria (identical to Flutter service)
+    this.recentDbHistory.push(currentDb);
+    if (this.recentDbHistory.length > 20) {
+      this.recentDbHistory.shift();
+    }
+
     const delta = currentDb - this.ambientBaselineDb;
-    const isLoud = currentDb >= sensitivityDb;
-    const isSudden = delta >= 18;
+    const isLoud = currentDb >= this.currentSensitivityDb;
     const isCooled = Date.now() - this.lastTriggerTime > this.cooldownMs;
-    const isSpike = isLoud && isSudden;
+
+    let isTriggerMatch = false;
+    let triggerReason = 'Clap Detected';
+
+    if (this.detectionMode === 'clap') {
+      // Clap: Sudden sharp acoustic spike
+      const isSudden = delta >= 16;
+      isTriggerMatch = isLoud && isSudden;
+      triggerReason = 'Clap Sound';
+    } else if (this.detectionMode === 'whistle') {
+      // Whistle: High-pitch spectral concentration (bins 20 to 50 in 512-point FFT)
+      let highFreqEnergy = 0;
+      for (let i = 20; i < 55; i++) {
+        highFreqEnergy += freqDataArray[i] || 0;
+      }
+      const avgHighFreq = highFreqEnergy / 35;
+      isTriggerMatch = currentDb >= this.currentSensitivityDb - 5 && avgHighFreq > 90;
+      triggerReason = 'Whistle Sound';
+    } else if (this.detectionMode === 'preloaded_voice') {
+      // Pre-loaded Voice: Multi-syllable speech burst
+      const isSpeechBurst = currentDb >= this.currentSensitivityDb - 3 && delta >= 12;
+      const speechPoints = this.recentDbHistory.filter((db) => db >= this.currentSensitivityDb - 6).length;
+      isTriggerMatch = isSpeechBurst && speechPoints >= 3;
+      triggerReason = `Voice Trigger ("${this.preloadedVoicePhrase}")`;
+    } else if (this.detectionMode === 'custom_voice') {
+      // Custom Voice: Matches voice envelope characteristics
+      if (this.customVoiceProfile) {
+        const isVoiceEnergy = currentDb >= this.currentSensitivityDb - 4 && delta >= 10;
+        const voiceSustain = this.recentDbHistory.filter((db) => db >= this.currentSensitivityDb - 7).length;
+        isTriggerMatch = isVoiceEnergy && voiceSustain >= 3 && voiceSustain <= 15;
+      } else {
+        isTriggerMatch = isLoud && delta >= 14;
+      }
+      triggerReason = 'Recorded Custom Voice Match';
+    }
 
     if (this.onTelemetry) {
       this.onTelemetry({
         currentDb,
         ambientDb: this.ambientBaselineDb,
-        isSpike,
-        waveformData: dataArray,
+        isSpike: isTriggerMatch,
+        waveformData: timeDataArray,
       });
     }
 
-    if (isSpike && isCooled) {
+    if (isTriggerMatch && isCooled) {
       this.lastTriggerTime = Date.now();
       if (this.onAlertTriggered) {
-        this.onAlertTriggered(currentDb);
+        this.onAlertTriggered(currentDb, triggerReason);
       }
     }
 
-    this.animFrameId = requestAnimationFrame(() => this.loop(sensitivityDb));
+    this.animFrameId = requestAnimationFrame(this.loop);
   };
 
   /**
@@ -146,7 +210,6 @@ export class WebAudioSimulator {
         high = !high;
       }, 250);
 
-      // Trigger navigator.vibrate if available on device
       if ('vibrate' in navigator) {
         navigator.vibrate([500, 200, 500, 200, 800, 200]);
       }
